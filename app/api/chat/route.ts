@@ -43,7 +43,7 @@ TONE:
 - Music-first: talk about tone, feel, artists, genres before specs
 - British sensibility: pounds, not dollars
 
-If the user says "__greet__", respond with a warm, friendly opening that invites them to tell you about their music.`;
+`;
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
