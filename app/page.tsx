@@ -194,6 +194,36 @@ export default function Home() {
           </div>
         </section>
 
+        {/* ── Now Playing ──────────────────────────────────────────── */}
+        <section style={{ padding: "0 16px 16px", maxWidth: "1100px", margin: "0 auto", width: "100%" }}>
+          <div
+            style={{
+              background: "#111",
+              border: "1px solid #1e1e1e",
+              borderRadius: "20px",
+              padding: "28px 28px 0",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "8px", height: "8px", borderRadius: "50%", background: "#1DB954" }} />
+              <p style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.18em", color: "#4a4a4a", textTransform: "uppercase" }}>
+                Now Playing
+              </p>
+              <p style={{ fontSize: "10px", color: "#3a3a3a", letterSpacing: "0.05em" }}>— Manilla Times</p>
+            </div>
+            <iframe
+              src="https://open.spotify.com/embed/artist/4pJF1tw5SVplqOd4WIMz5n?utm_source=generator&theme=0"
+              width="100%"
+              height="352"
+              frameBorder="0"
+              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+              loading="lazy"
+              style={{ borderRadius: "0 0 12px 12px", display: "block" }}
+            />
+          </div>
+        </section>
+
         {/* ── Editorial strip ───────────────────────────────────────── */}
         <section
           style={{
