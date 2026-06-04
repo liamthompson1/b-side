@@ -8,16 +8,72 @@ import remarkGfm from "remark-gfm";
 import ProductCard from "./ProductCard";
 import { getProductsByIds } from "@/lib/products";
 
-type ContextualChip = { label: string; prompt: string };
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-const INITIAL_CHIPS: ContextualChip[] = [
-  { label: "♪  Favourite Band", prompt: "I want to find guitars based on my favourite band" },
-  { label: "◈  Favourite Brand", prompt: "I already have a favourite guitar brand in mind" },
-  { label: "◎  Experience Level", prompt: "Help me find a guitar based on my experience and budget" },
+type FlowMode = "chip" | "quiz" | null;
+type QuizStage = "experience" | "venue" | "budget" | "band_brand" | "done";
+
+interface QuizAnswers {
+  experience?: string;
+  venue?: string;
+  budget?: string;
+  bandBrand?: string;
+}
+
+interface LocalMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  quizStage?: QuizStage;
+}
+
+// ─── Quiz config ──────────────────────────────────────────────────────────────
+
+const QUIZ = [
+  {
+    stage: "experience" as QuizStage,
+    question: "How long have you been playing?",
+    options: [
+      { label: "Just started", icon: "○", value: "complete beginner" },
+      { label: "A few years in", icon: "◑", value: "a few years of experience" },
+      { label: "Gigging musician", icon: "●", value: "experienced gigging musician" },
+      { label: "Decades deep", icon: "★", value: "many years — very experienced" },
+    ],
+  },
+  {
+    stage: "venue" as QuizStage,
+    question: "Where do you mainly play?",
+    options: [
+      { label: "On stage", icon: "▲", value: "performing live on stage" },
+      { label: "In the studio", icon: "◈", value: "recording in a studio" },
+      { label: "In the garage", icon: "⬡", value: "jamming in the garage" },
+      { label: "In the bedroom", icon: "◎", value: "bedroom player at home" },
+    ],
+  },
+  {
+    stage: "budget" as QuizStage,
+    question: "What's your budget?",
+    options: [
+      { label: "Under £600", icon: "·", value: "budget under £600" },
+      { label: "£600 – £1,000", icon: "··", value: "budget £600–£1,000" },
+      { label: "£1,000 – £1,500", icon: "···", value: "budget £1,000–£1,500" },
+      { label: "£1,500+", icon: "····", value: "budget over £1,500" },
+    ],
+  },
+  {
+    stage: "band_brand" as QuizStage,
+    question: "Favourite band or brand? (skip if you're not sure)",
+    isText: true,
+  },
 ];
 
-const STATIC_GREETING =
-  "Hey! I'm B-Side's guitar expert. Tell me about the music you play, a band you love, or what you want to spend — and I'll find you the perfect guitar.";
+const CHIP_PROMPTS = [
+  "I want to find guitars based on my favourite band",
+  "I already have a favourite guitar brand in mind",
+  "Help me find a guitar based on my experience and budget",
+];
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function GuitarFinder({
   initialInput,
@@ -26,85 +82,162 @@ export default function GuitarFinder({
   initialInput?: string;
   onClose: () => void;
 }) {
-  const transport = useMemo(() => new DefaultChatTransport({ api: "/api/chat" }), []);
+  const transport = useMemo(
+    () => new DefaultChatTransport({ api: "/api/chat" }),
+    []
+  );
   const { messages, sendMessage, status } = useChat({ transport });
+
+  const [flowMode, setFlowMode] = useState<FlowMode>(null);
+  const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
+  const [quizStage, setQuizStage] = useState<QuizStage | null>(null);
+  const [quizAnswers, setQuizAnswers] = useState<QuizAnswers>({});
+  const [bandInput, setBandInput] = useState("");
   const [input, setInput] = useState("");
-  const [chips, setChips] = useState<ContextualChip[]>(INITIAL_CHIPS);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const didAutoSend = useRef(false);
+  const didInit = useRef(false);
 
+  const isStreaming = status === "streaming";
+
+  // ── Scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, localMessages, quizStage]);
 
+  // ── Focus input on open
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  // Auto-send initialInput once on mount
+  // ── Auto-send initialInput on mount
   useEffect(() => {
-    if (didAutoSend.current || !initialInput) return;
-    didAutoSend.current = true;
-    sendMessage({ role: "user", parts: [{ type: "text", text: initialInput }] });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (didInit.current || !initialInput) return;
+    didInit.current = true;
+    const isChip = CHIP_PROMPTS.includes(initialInput);
+    if (isChip) {
+      startChipFlow(initialInput);
+    } else {
+      startQuizFlow(initialInput);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update chips based on last assistant message
-  useEffect(() => {
-    const last = [...messages].reverse().find((m) => m.role === "assistant");
-    if (!last) return;
-    const text = last.parts
-      .filter((p) => p.type === "text")
-      .map((p) => (p as { type: "text"; text: string }).text)
-      .join(" ")
-      .toLowerCase();
-
-    if (text.includes("budget") || text.includes("spend") || text.includes("price")) {
-      setChips([
-        { label: "Under £700", prompt: "My budget is under £700" },
-        { label: "£700–£1,000", prompt: "My budget is between £700 and £1,000" },
-        { label: "Up to £1,500", prompt: "My budget is up to £1,500" },
-      ]);
-    } else if (text.includes("style") || text.includes("genre") || text.includes("play")) {
-      setChips([
-        { label: "Rock / Metal", prompt: "I mostly play rock and metal" },
-        { label: "Blues / Jazz", prompt: "I play blues and jazz" },
-        { label: "Folk / Country", prompt: "I play folk and country" },
-        { label: "Indie / Alternative", prompt: "I play indie and alternative" },
-      ]);
-    } else if (text.includes("experience") || text.includes("beginner") || text.includes("how long")) {
-      setChips([
-        { label: "Complete beginner", prompt: "I'm a complete beginner" },
-        { label: "A few years in", prompt: "I've been playing a few years" },
-        { label: "Gigging musician", prompt: "I'm an experienced gigging musician" },
-      ]);
-    } else if (messages.length >= 4) {
-      setChips([
-        { label: "Show me a demo", prompt: "Can I see a video demo of your top pick?" },
-        { label: "Something cheaper", prompt: "Do you have anything a bit cheaper?" },
-        { label: "Ready to buy", prompt: "I'm ready to buy — what's next?" },
-      ]);
-    }
-  }, [messages]);
-
-  function submit(text?: string) {
-    const value = (text ?? input).trim();
-    if (!value || status === "streaming") return;
-    sendMessage({ role: "user", parts: [{ type: "text", text: value }] });
-    setInput("");
+  // ── Chip flow: send directly to Claude
+  function startChipFlow(prompt: string) {
+    setFlowMode("chip");
+    sendMessage({ role: "user", parts: [{ type: "text", text: prompt }] });
   }
 
-  const isStreaming = status === "streaming";
+  // ── Quiz flow: show visual questions locally first
+  function startQuizFlow(userText: string) {
+    setFlowMode("quiz");
+    const id = Date.now().toString();
+    setLocalMessages([
+      { id: `u-${id}`, role: "user", text: userText },
+      {
+        id: `a-${id}`,
+        role: "assistant",
+        text: QUIZ[0].question,
+        quizStage: "experience",
+      },
+    ]);
+    setQuizStage("experience");
+  }
 
-  const visibleMessages = messages.filter((m) => {
-    if (m.role !== "user") return true;
-    const text = m.parts
-      .filter((p) => p.type === "text")
-      .map((p) => (p as { type: "text"; text: string }).text)
-      .join("");
-    return text.trim() !== "";
-  });
+  // ── Handle quiz option select
+  function selectQuizOption(stageId: QuizStage, optionValue: string, optionLabel: string) {
+    const newAnswers = { ...quizAnswers, [stageId]: optionValue };
+    setQuizAnswers(newAnswers);
+
+    const nextIndex = QUIZ.findIndex((q) => q.stage === stageId) + 1;
+    const id = Date.now().toString();
+
+    setLocalMessages((prev) => [
+      ...prev,
+      { id: `u-${id}`, role: "user", text: optionLabel },
+    ]);
+
+    if (nextIndex < QUIZ.length) {
+      const next = QUIZ[nextIndex];
+      setTimeout(() => {
+        setLocalMessages((prev) => [
+          ...prev,
+          {
+            id: `a-${id}`,
+            role: "assistant",
+            text: next.question,
+            quizStage: next.stage,
+          },
+        ]);
+        setQuizStage(next.stage);
+      }, 300);
+    } else {
+      setQuizStage("done");
+      submitQuizToAgent(newAnswers, "");
+    }
+  }
+
+  // ── Handle band/brand text submit in quiz
+  function submitBandBrand(value: string) {
+    const newAnswers = { ...quizAnswers, bandBrand: value || undefined };
+    const id = Date.now().toString();
+    if (value) {
+      setLocalMessages((prev) => [
+        ...prev,
+        { id: `u-${id}`, role: "user", text: value },
+      ]);
+    }
+    setQuizStage("done");
+    submitQuizToAgent(newAnswers, value);
+  }
+
+  // ── Build prompt from quiz answers and send to Claude
+  function submitQuizToAgent(answers: QuizAnswers, bandBrand: string) {
+    const parts: string[] = [];
+    if (answers.experience) parts.push(answers.experience);
+    if (answers.venue) parts.push(answers.venue);
+    if (answers.budget) parts.push(answers.budget);
+    const band = bandBrand || answers.bandBrand;
+    if (band) parts.push(`favourite band/brand: ${band}`);
+
+    // Include original user text if any
+    const firstUserMsg = localMessages.find((m) => m.role === "user");
+    const contextLine = firstUserMsg ? `The customer said: "${firstUserMsg.text}". ` : "";
+
+    const prompt = `${contextLine}Their profile: ${parts.join(", ")}. Please recommend the best guitars for them straight away using showProducts.`;
+    sendMessage({ role: "user", parts: [{ type: "text", text: prompt }] });
+  }
+
+  // ── Free-text submit from the input bar
+  function submitInput(text?: string) {
+    const value = (text ?? input).trim();
+    if (!value || isStreaming) return;
+    setInput("");
+
+    if (flowMode === null) {
+      const isChip = CHIP_PROMPTS.includes(value);
+      if (isChip) {
+        startChipFlow(value);
+      } else {
+        startQuizFlow(value);
+      }
+      return;
+    }
+
+    // Already in chip/done mode — normal chat
+    sendMessage({ role: "user", parts: [{ type: "text", text: value }] });
+  }
+
+  // ── Active quiz question
+  const activeQuiz =
+    quizStage && quizStage !== "done"
+      ? QUIZ.find((q) => q.stage === quizStage) ?? null
+      : null;
+
+  // ── Contextual chips (post-quiz/chat)
+  const contextChips = getContextChips(messages, flowMode, quizStage);
 
   return (
     <div
@@ -123,7 +256,7 @@ export default function GuitarFinder({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "20px 24px",
+          padding: "18px 24px",
           borderBottom: "1px solid #1a1a1a",
           flexShrink: 0,
         }}
@@ -148,8 +281,8 @@ export default function GuitarFinder({
           style={{
             background: "none",
             border: "none",
-            color: "#6b6b6b",
-            fontSize: "20px",
+            color: "#5a5a5a",
+            fontSize: "18px",
             cursor: "pointer",
             padding: "4px 8px",
             lineHeight: 1,
@@ -168,45 +301,63 @@ export default function GuitarFinder({
           padding: "24px",
           display: "flex",
           flexDirection: "column",
-          gap: "20px",
-          maxWidth: "720px",
+          gap: "16px",
+          maxWidth: "680px",
           width: "100%",
           margin: "0 auto",
           boxSizing: "border-box",
         }}
       >
         {/* Static greeting */}
-        <AssistantRow>
-          <TextBubble text={STATIC_GREETING} />
-        </AssistantRow>
+        {flowMode === null && (
+          <AssistantRow>
+            <TextBubble text="Hey! I'm B-Side's guitar expert. Tell me about the music you play, a band you love, or what you want to spend — and I'll find you the perfect guitar." />
+          </AssistantRow>
+        )}
 
-        {visibleMessages.map((message) => {
-          if (message.role === "user") {
-            const text = message.parts
-              .filter((p) => p.type === "text")
-              .map((p) => (p as { type: "text"; text: string }).text)
-              .join("\n");
+        {/* Local quiz messages */}
+        {localMessages.map((msg) => {
+          const isUser = msg.role === "user";
+          if (isUser) {
             return (
-              <div key={message.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                <div
-                  style={{
-                    maxWidth: "75%",
-                    padding: "12px 16px",
-                    borderRadius: "18px 18px 4px 18px",
-                    background: "#e8d44d",
-                    color: "#0a0a0a",
-                    fontSize: "14px",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {text}
-                </div>
+              <div
+                key={msg.id}
+                style={{ display: "flex", justifyContent: "flex-end" }}
+              >
+                <UserBubble text={msg.text} />
               </div>
             );
           }
+          return (
+            <AssistantRow key={msg.id}>
+              <TextBubble text={msg.text} />
+            </AssistantRow>
+          );
+        })}
 
-          // Assistant message — combine all text parts into one bubble,
-          // tool results rendered inline in order
+        {/* Claude API messages */}
+        {messages.map((message) => {
+          if (message.role === "user") {
+            // Only show user messages in chip flow (quiz flow hides them via localMessages)
+            if (flowMode === "chip") {
+              const text = message.parts
+                .filter((p) => p.type === "text")
+                .map((p) => (p as { type: "text"; text: string }).text)
+                .join("\n");
+              if (!text || CHIP_PROMPTS.includes(text)) return null;
+              return (
+                <div
+                  key={message.id}
+                  style={{ display: "flex", justifyContent: "flex-end" }}
+                >
+                  <UserBubble text={text} />
+                </div>
+              );
+            }
+            return null;
+          }
+
+          // Assistant message — merge text parts, render tools inline
           const elements: React.ReactNode[] = [];
           let textBuffer = "";
 
@@ -240,10 +391,8 @@ export default function GuitarFinder({
                   title?: string;
                 };
               };
-
               if (inv.state !== "output-available") return;
-
-              flushText(`text-before-${key}`);
+              flushText(`text-${key}`);
 
               if (part.type === "tool-showProducts" && inv.output?.productIds) {
                 const found = getProductsByIds(inv.output.productIds);
@@ -269,14 +418,16 @@ export default function GuitarFinder({
                         gridTemplateColumns:
                           found.length === 1
                             ? "1fr"
-                            : found.length === 2
-                            ? "repeat(2, 1fr)"
-                            : "repeat(auto-fill, minmax(200px, 1fr))",
+                            : "repeat(auto-fill, minmax(190px, 1fr))",
                         gap: "12px",
                       }}
                     >
                       {found.map((p) => (
-                        <ProductCard key={p.id} product={p} featured={found.length === 1} />
+                        <ProductCard
+                          key={p.id}
+                          product={p}
+                          featured={found.length === 1}
+                        />
                       ))}
                     </div>
                   </div>
@@ -308,7 +459,13 @@ export default function GuitarFinder({
                         {inv.output.title}
                       </p>
                     )}
-                    <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
+                    <div
+                      style={{
+                        position: "relative",
+                        paddingBottom: "56.25%",
+                        height: 0,
+                      }}
+                    >
                       <iframe
                         src={`https://www.youtube-nocookie.com/embed/${inv.output.youtubeId}?rel=0&modestbranding=1`}
                         style={{
@@ -332,9 +489,17 @@ export default function GuitarFinder({
 
           flushText(`text-end-${message.id}`);
 
-          return <div key={message.id} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>{elements}</div>;
+          return (
+            <div
+              key={message.id}
+              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+            >
+              {elements}
+            </div>
+          );
         })}
 
+        {/* Streaming indicator */}
         {isStreaming && (
           <AssistantRow>
             <div
@@ -367,99 +532,201 @@ export default function GuitarFinder({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
+      {/* Input / Quiz area */}
       <div
         style={{
-          padding: "14px 24px 20px",
           borderTop: "1px solid #1a1a1a",
           flexShrink: 0,
-          maxWidth: "720px",
+          maxWidth: "680px",
           width: "100%",
           margin: "0 auto",
           boxSizing: "border-box",
+          padding: "14px 24px 20px",
         }}
       >
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
-          {chips.map((chip) => (
-            <button
-              key={chip.label}
-              onClick={() => submit(chip.prompt)}
-              disabled={isStreaming}
-              style={{
-                background: "transparent",
-                border: "1px solid #2a2a2a",
-                color: "#7a7a7a",
-                fontSize: "12px",
-                padding: "6px 14px",
-                borderRadius: "20px",
-                cursor: isStreaming ? "not-allowed" : "pointer",
-                transition: "all 0.15s",
-                whiteSpace: "nowrap",
-              }}
-              onMouseEnter={(e) => {
-                if (!isStreaming) {
-                  e.currentTarget.style.borderColor = "#e8d44d";
-                  e.currentTarget.style.color = "#e8d44d";
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "#2a2a2a";
-                e.currentTarget.style.color = "#7a7a7a";
-              }}
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
+        {/* Active quiz question — visual answer cards */}
+        {activeQuiz && !isStreaming && (
+          <div style={{ marginBottom: "16px" }}>
+            {activeQuiz.isText ? (
+              /* Band/brand text input */
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input
+                  autoFocus
+                  value={bandInput}
+                  onChange={(e) => setBandInput(e.target.value)}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && submitBandBrand(bandInput)
+                  }
+                  placeholder="e.g. Radiohead, Fender, John Mayer..."
+                  style={{
+                    flex: 1,
+                    background: "#111",
+                    border: "1px solid #252525",
+                    borderRadius: "10px",
+                    padding: "12px 16px",
+                    color: "#fff",
+                    fontSize: "14px",
+                    outline: "none",
+                    caretColor: "#e8d44d",
+                  }}
+                />
+                <button
+                  onClick={() => submitBandBrand(bandInput)}
+                  style={{
+                    background: "#e8d44d",
+                    color: "#0a0a0a",
+                    border: "none",
+                    borderRadius: "10px",
+                    padding: "12px 18px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Find →
+                </button>
+                <button
+                  onClick={() => submitBandBrand("")}
+                  style={{
+                    background: "transparent",
+                    color: "#5a5a5a",
+                    border: "1px solid #252525",
+                    borderRadius: "10px",
+                    padding: "12px 14px",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Skip
+                </button>
+              </div>
+            ) : (
+              /* Option cards grid */
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                  gap: "10px",
+                }}
+              >
+                {activeQuiz.options?.map((opt) => (
+                  <QuizCard
+                    key={opt.value}
+                    icon={opt.icon}
+                    label={opt.label}
+                    onClick={() =>
+                      selectQuizOption(activeQuiz.stage, opt.value, opt.label)
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            alignItems: "center",
-            background: "#111",
-            border: "1px solid #252525",
-            borderRadius: "12px",
-            padding: "4px 4px 4px 16px",
-          }}
-        >
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && submit()}
-            placeholder="Ask about a guitar, a band, a budget..."
-            disabled={isStreaming}
+        {/* Contextual chips (post-quiz or chip-flow follow-ups) */}
+        {!activeQuiz && contextChips.length > 0 && (
+          <div
             style={{
-              flex: 1,
-              background: "transparent",
-              border: "none",
-              outline: "none",
-              color: "#fff",
-              fontSize: "14px",
-              padding: "10px 0",
-              caretColor: "#e8d44d",
-            }}
-          />
-          <button
-            onClick={() => submit()}
-            disabled={!input.trim() || isStreaming}
-            style={{
-              background: input.trim() && !isStreaming ? "#e8d44d" : "#1e1e1e",
-              color: input.trim() && !isStreaming ? "#0a0a0a" : "#3a3a3a",
-              border: "none",
-              borderRadius: "8px",
-              padding: "10px 18px",
-              fontSize: "13px",
-              fontWeight: 700,
-              cursor: input.trim() && !isStreaming ? "pointer" : "not-allowed",
-              transition: "all 0.15s",
-              flexShrink: 0,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: "12px",
             }}
           >
-            Send
-          </button>
-        </div>
+            {contextChips.map((chip) => (
+              <button
+                key={chip.label}
+                onClick={() => submitInput(chip.prompt)}
+                disabled={isStreaming}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #252525",
+                  color: "#7a7a7a",
+                  fontSize: "12px",
+                  padding: "6px 14px",
+                  borderRadius: "20px",
+                  cursor: isStreaming ? "not-allowed" : "pointer",
+                  transition: "all 0.15s",
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isStreaming) {
+                    e.currentTarget.style.borderColor = "#e8d44d";
+                    e.currentTarget.style.color = "#e8d44d";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "#252525";
+                  e.currentTarget.style.color = "#7a7a7a";
+                }}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Text input (hidden during active quiz) */}
+        {!activeQuiz && (
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              alignItems: "center",
+              background: "#111",
+              border: "1px solid #252525",
+              borderRadius: "12px",
+              padding: "4px 4px 4px 16px",
+            }}
+          >
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) =>
+                e.key === "Enter" && !e.shiftKey && submitInput()
+              }
+              placeholder={
+                flowMode === null
+                  ? "What kind of guitarist are you?"
+                  : "Ask anything..."
+              }
+              disabled={isStreaming}
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                color: "#fff",
+                fontSize: "14px",
+                padding: "10px 0",
+                caretColor: "#e8d44d",
+              }}
+            />
+            <button
+              onClick={() => submitInput()}
+              disabled={!input.trim() || isStreaming}
+              style={{
+                background:
+                  input.trim() && !isStreaming ? "#e8d44d" : "#1e1e1e",
+                color:
+                  input.trim() && !isStreaming ? "#0a0a0a" : "#3a3a3a",
+                border: "none",
+                borderRadius: "8px",
+                padding: "10px 18px",
+                fontSize: "13px",
+                fontWeight: 700,
+                cursor:
+                  input.trim() && !isStreaming ? "pointer" : "not-allowed",
+                transition: "all 0.15s",
+                flexShrink: 0,
+              }}
+            >
+              Send
+            </button>
+          </div>
+        )}
       </div>
 
       <style>{`
@@ -479,10 +746,127 @@ export default function GuitarFinder({
   );
 }
 
+// ─── Quiz card ────────────────────────────────────────────────────────────────
+
+function QuizCard({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: hovered ? "#1e1e1e" : "#141414",
+        border: `1px solid ${hovered ? "#e8d44d" : "#252525"}`,
+        borderRadius: "12px",
+        padding: "16px 14px",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "all 0.15s",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+      }}
+    >
+      <span
+        style={{
+          fontSize: "18px",
+          color: hovered ? "#e8d44d" : "#4a4a4a",
+          lineHeight: 1,
+          transition: "color 0.15s",
+        }}
+      >
+        {icon}
+      </span>
+      <span
+        style={{
+          fontSize: "13px",
+          fontWeight: 600,
+          color: hovered ? "#ffffff" : "#b0b0b0",
+          transition: "color 0.15s",
+        }}
+      >
+        {label}
+      </span>
+    </button>
+  );
+}
+
+// ─── Context chips ────────────────────────────────────────────────────────────
+
+function getContextChips(
+  messages: ReturnType<typeof useChat>["messages"],
+  flowMode: FlowMode,
+  quizStage: QuizStage | null
+): { label: string; prompt: string }[] {
+  if (quizStage && quizStage !== "done") return [];
+  if (messages.length === 0) return [];
+
+  const last = [...messages].reverse().find((m) => m.role === "assistant");
+  if (!last) return [];
+
+  const text = last.parts
+    .filter((p) => p.type === "text")
+    .map((p) => (p as { type: "text"; text: string }).text)
+    .join(" ")
+    .toLowerCase();
+
+  if (text.includes("budget") || text.includes("spend")) {
+    return [
+      { label: "Under £600", prompt: "My budget is under £600" },
+      { label: "£600–£1,000", prompt: "Budget is £600–£1,000" },
+      { label: "£1,000–£1,500", prompt: "Budget is £1,000–£1,500" },
+    ];
+  }
+  if (text.includes("style") || text.includes("genre")) {
+    return [
+      { label: "Rock / Metal", prompt: "I mostly play rock and metal" },
+      { label: "Blues / Jazz", prompt: "I play blues and jazz" },
+      { label: "Folk / Country", prompt: "I play folk and country" },
+    ];
+  }
+  if (messages.length >= 4) {
+    return [
+      { label: "Show me a demo", prompt: "Can I see a video demo of your top pick?" },
+      { label: "Something cheaper", prompt: "Do you have anything cheaper?" },
+      { label: "I'm ready to buy", prompt: "I'm ready to buy — what's next?" },
+    ];
+  }
+  return [];
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
 function AssistantRow({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", justifyContent: "flex-start" }}>
       {children}
+    </div>
+  );
+}
+
+function UserBubble({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        maxWidth: "75%",
+        padding: "12px 16px",
+        borderRadius: "18px 18px 4px 18px",
+        background: "#e8d44d",
+        color: "#0a0a0a",
+        fontSize: "14px",
+        lineHeight: 1.6,
+      }}
+    >
+      {text}
     </div>
   );
 }
@@ -495,7 +879,7 @@ function TextBubble({ text }: { text: string }) {
         padding: "12px 16px",
         borderRadius: "4px 18px 18px 18px",
         background: "#1a1a1a",
-        color: "#d8d8d8",
+        color: "#d0d0d0",
         fontSize: "14px",
         lineHeight: 1.65,
       }}
