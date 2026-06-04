@@ -3,28 +3,33 @@ import { type Product } from "@/lib/products";
 export default function ProductCard({
   product,
   featured = false,
+  onClick,
 }: {
   product: Product;
   featured?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <div
+      onClick={onClick}
       style={{
         background: "#141414",
         border: "1px solid #252525",
         borderRadius: "12px",
         overflow: "hidden",
-        transition: "border-color 0.2s",
-        cursor: "pointer",
+        transition: "border-color 0.2s, transform 0.15s",
+        cursor: onClick ? "pointer" : "default",
       }}
-      onMouseEnter={(e) =>
-        (e.currentTarget.style.borderColor = "#e8d44d")
-      }
-      onMouseLeave={(e) =>
-        (e.currentTarget.style.borderColor = "#252525")
-      }
+      onMouseEnter={(e) => {
+        if (!onClick) return;
+        e.currentTarget.style.borderColor = "#e8d44d";
+        e.currentTarget.style.transform = "translateY(-2px)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "#252525";
+        e.currentTarget.style.transform = "translateY(0)";
+      }}
     >
-      {/* Image */}
       <div style={{ position: "relative", paddingBottom: "60%", background: "#1a1a1a" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -56,9 +61,26 @@ export default function ProductCard({
             NEW
           </span>
         )}
+        {onClick && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "10px",
+              right: "10px",
+              background: "rgba(0,0,0,0.6)",
+              border: "1px solid #3a3a3a",
+              borderRadius: "6px",
+              padding: "4px 10px",
+              fontSize: "10px",
+              color: "#aaa",
+              letterSpacing: "0.06em",
+            }}
+          >
+            View →
+          </div>
+        )}
       </div>
 
-      {/* Info */}
       <div style={{ padding: featured ? "16px" : "12px" }}>
         <p
           style={{
@@ -83,41 +105,18 @@ export default function ProductCard({
         >
           {product.name}
         </p>
-
-        {/* Stars */}
         <div style={{ display: "flex", gap: "2px", marginBottom: "8px" }}>
           {Array.from({ length: 5 }).map((_, i) => (
-            <span
-              key={i}
-              style={{
-                fontSize: "10px",
-                color: i < product.stars ? "#e8d44d" : "#333",
-              }}
-            >
+            <span key={i} style={{ fontSize: "10px", color: i < product.stars ? "#e8d44d" : "#333" }}>
               ★
             </span>
           ))}
         </div>
-
-        <p
-          style={{
-            fontSize: featured ? "16px" : "14px",
-            fontWeight: 700,
-            color: "#ffffff",
-          }}
-        >
+        <p style={{ fontSize: featured ? "16px" : "14px", fontWeight: 700, color: "#ffffff" }}>
           £{product.price.toLocaleString()}
         </p>
-
         {featured && (
-          <p
-            style={{
-              fontSize: "11px",
-              color: "#6b6b6b",
-              marginTop: "8px",
-              lineHeight: 1.5,
-            }}
-          >
+          <p style={{ fontSize: "11px", color: "#6b6b6b", marginTop: "8px", lineHeight: 1.5 }}>
             {product.description}
           </p>
         )}
