@@ -22,7 +22,28 @@ export default function ProductModal({
 
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Auto-generate guitar image on mount
+  // Auto-generate with persona on mount — also triggers personalised image immediately
+  useEffect(() => {
+    setPersonalState("loading");
+    fetch("/api/personalize-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guitarName: product.name, brand: product.brand, venue }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.imageData) {
+          setPersonalImage(`data:${d.mimeType};base64,${d.imageData}`);
+          setPersonalState("done");
+        } else {
+          setPersonalState("error");
+        }
+      })
+      .catch(() => setPersonalState("error"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.id, venue]);
+
+  // Fallback guitar-only image in case personalise fails
   useEffect(() => {
     setAiImageState("loading");
     fetch("/api/generate-image", {
@@ -352,7 +373,7 @@ export default function ProductModal({
                 lineHeight: 1.5,
               }}
             >
-              Upload a photo of yourself and we&apos;ll place you in the scene.
+              Upload your own photo to swap the player out for you.
             </p>
 
             <input
@@ -380,10 +401,8 @@ export default function ProductModal({
               }}
             >
               {isPersonalising
-                ? "Generating your scene…"
-                : personalState === "done"
-                ? "↑ Upload a different photo"
-                : "↑ Upload your photo"}
+                ? "Generating…"
+                : "↑ Use your own photo instead"}
             </button>
 
             {personalState === "error" && (

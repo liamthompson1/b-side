@@ -1,55 +1,61 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+
 const VENUE_PROMPTS: Record<string, string> = {
   "performing live on stage":
-    "on a dramatic concert stage, purple and white spotlights cutting through haze, crowd silhouettes in background, smoke machine, epic atmosphere",
+    "on a dramatic concert stage, purple and white spotlights cutting through haze, crowd silhouettes in background",
   "recording in a studio":
-    "in a professional recording studio, warm overhead lighting, vintage amplifiers, mixing desk visible in background, acoustic panels on walls",
+    "in a professional recording studio, warm overhead lighting, vintage amplifiers, mixing desk visible",
   "jamming in the garage":
-    "in a dimly lit garage band rehearsal space, exposed brick walls, vintage Marshall amp, string lights, authentic lived-in feel",
+    "in a dimly lit garage band rehearsal space, exposed brick walls, vintage Marshall amp, string lights",
   "bedroom player at home":
-    "in a cozy bedroom, warm bedside lamp, guitar posters on wall, casual intimate home setting, golden light",
+    "in a cozy bedroom, warm bedside lamp, guitar posters on the wall, golden light",
 };
 
 function getVenuePrompt(venue?: string): string {
-  if (!venue) return "in a music store with warm lighting, guitars hanging on the wall";
+  if (!venue) return "on a concert stage with dramatic blue stage lighting";
   return VENUE_PROMPTS[venue] ?? "in a beautifully lit music space";
+}
+
+let personaBase64: string | null = null;
+function getPersonaBase64(): string {
+  if (!personaBase64) {
+    const buf = readFileSync(join(process.cwd(), "public", "persona.jpg"));
+    personaBase64 = buf.toString("base64");
+  }
+  return personaBase64;
 }
 
 export async function POST(req: Request) {
   const { guitarName, brand, venue, userPhoto } = await req.json();
   const venueDesc = getVenuePrompt(venue);
 
-  // Step 1: describe the person's appearance from their photo
-  const describeRes = await fetch(
+  // Use uploaded photo if provided, otherwise default to persona
+  const photoB64 = userPhoto
+    ? userPhoto.replace(/^data:image\/\w+;base64,/, "")
+    : getPersonaBase64();
+
+  const descRes = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: "image/jpeg",
-                  data: userPhoto.replace(/^data:image\/\w+;base64,/, ""),
-                },
-              },
-              {
-                text: "Describe this person's physical appearance in detail for an AI image generator: hair colour and style, skin tone, approximate age, face shape, any notable features. Be specific and concise. 2-3 sentences max.",
-              },
-            ],
-          },
-        ],
+        contents: [{
+          parts: [
+            { inlineData: { mimeType: "image/jpeg", data: photoB64 } },
+            { text: "Describe this person's exact appearance in 2-3 sentences for an AI image generator: age, hair, face, clothing, style. Be specific and visual." },
+          ],
+        }],
       }),
     }
   );
 
-  const describeData = await describeRes.json();
-  const personDescription =
-    describeData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "a musician";
+  const descData = await descRes.json();
+  const personDescription = descData?.candidates?.[0]?.content?.parts?.[0]?.text
+    ?? "a young man in his late 20s with short beard, beige cap, round sunglasses, dark navy shirt";
 
-  // Step 2: generate the personalised guitar image
-  const prompt = `Cinematic photograph of ${personDescription} playing a ${brand} ${guitarName} guitar ${venueDesc}. The person is the focus, playing with passion. Moody dramatic lighting, photorealistic, 35mm lens, shallow depth of field, high quality.`;
+  const prompt = `Cinematic photograph of ${personDescription} playing a ${brand} ${guitarName} guitar ${venueDesc}. Playing with passion and focus. Moody dramatic lighting, photorealistic, 35mm lens, shallow depth of field.`;
 
   const genRes = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-fast-generate-001:predict?key=${process.env.GEMINI_API_KEY}`,

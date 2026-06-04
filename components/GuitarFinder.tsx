@@ -288,6 +288,7 @@ export default function GuitarFinder({
 
               if (part.type === "tool-showProducts" && inv.output?.productIds) {
                 const found = getProductsByIds(inv.output.productIds);
+                const isMultiple = found.length > 1;
                 elements.push(
                   <div key={key}>
                     {inv.output.headline && (
@@ -295,11 +296,18 @@ export default function GuitarFinder({
                         {inv.output.headline}
                       </p>
                     )}
-                    <div style={{ display: "grid", gridTemplateColumns: found.length === 1 ? "1fr" : "repeat(auto-fill, minmax(190px, 1fr))", gap: "12px" }}>
-                      {found.map((p) => (
-                        <ProductCard key={p.id} product={p} featured={found.length === 1} onClick={() => setModalProduct(p)} />
-                      ))}
-                    </div>
+                    {isMultiple ? (
+                      /* Horizontal scrollable carousel */
+                      <div style={{ display: "flex", gap: "12px", overflowX: "auto", scrollSnapType: "x mandatory", paddingBottom: "8px", marginRight: "-24px", paddingRight: "24px" }}>
+                        {found.map((p) => (
+                          <div key={p.id} style={{ scrollSnapAlign: "start", minWidth: "220px", maxWidth: "220px" }}>
+                            <ProductCard product={p} venue={venue} onClick={() => setModalProduct(p)} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <ProductCard product={found[0]} venue={venue} featured onClick={() => setModalProduct(found[0])} />
+                    )}
                   </div>
                 );
               }
@@ -378,7 +386,7 @@ export default function GuitarFinder({
                   onChange={(e) => setBandInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && submitBandBrand(bandInput)}
                   placeholder="e.g. Radiohead, Fender, John Mayer..."
-                  style={{ flex: 1, background: "#111", border: "1px solid #252525", borderRadius: "10px", padding: "12px 16px", color: "#fff", fontSize: "14px", outline: "none", caretColor: "#e8d44d" }}
+                  style={{ flex: 1, background: "#111", border: "1px solid #252525", borderRadius: "10px", padding: "12px 16px", color: "#fff", fontSize: "16px", outline: "none", caretColor: "#e8d44d" }}
                 />
                 <button onClick={() => submitBandBrand(bandInput)} style={{ background: "#e8d44d", color: "#0a0a0a", border: "none", borderRadius: "10px", padding: "12px 18px", fontWeight: 700, fontSize: "13px", cursor: "pointer" }}>
                   Find →
@@ -416,7 +424,7 @@ export default function GuitarFinder({
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && submitInput()}
               placeholder={flowMode === null ? "What kind of guitarist are you?" : "Ask anything..."}
               disabled={isStreaming}
-              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "#fff", fontSize: "14px", padding: "10px 0", caretColor: "#e8d44d" }}
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "#fff", fontSize: "16px", padding: "10px 0", caretColor: "#e8d44d" }}
             />
             <button
               onClick={() => submitInput()}
